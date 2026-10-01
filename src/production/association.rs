@@ -72,6 +72,13 @@ impl<K, O, E> SCProductionMap<K, O, E> {
     /// subsequent cache lookup/publication themselves.
     /// A joined observer does not reserve the result: another observer can claim
     /// it concurrently. Serialize claim and publication in the owning coordinator.
+    ///
+    /// When composing with `SCPublication`, look up a valid cached result first.
+    /// Create and retain a publication ticket only for `Started`, before submitting
+    /// its provider. `Joined` uses the existing attempt and must not start a new
+    /// publication round. Keep the original ticket with that production's outcome.
+    /// This map compares identity only, not dependency/source revisions: changed
+    /// inputs require explicit supersession or settlement of the old association.
     pub fn begin_shared<I>(
         &mut self,
         identity: &SCIdentity<K>,

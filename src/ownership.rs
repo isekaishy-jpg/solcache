@@ -47,6 +47,28 @@ struct CleanupQueue<T> {
     records: Mutex<Vec<CleanupRecord<T>>>,
 }
 
+// Exclusive owners use the same scoped retirement queue as shared backing.
+pub(crate) struct SCCleanupSink<'cleanup, T> {
+    queue: Arc<CleanupQueue<T>>,
+    cleanup_lifetime: PhantomData<&'cleanup ()>,
+}
+
+impl<T> Clone for SCCleanupSink<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            queue: Arc::clone(&self.queue),
+            cleanup_lifetime: PhantomData,
+        }
+    }
+}
+
+impl<T> SCCleanupSink<'_, T> {
+    pub(crate) fn retire(&self, value: T, mut charge: SCAllocationCharge) {
+        charge.transition(SCAllocationClass::Retiring);
+        self.queue.records().push(CleanupRecord { value, charge });
+    }
+}
+
 impl<T> CleanupQueue<T> {
     fn records(&self) -> MutexGuard<'_, Vec<CleanupRecord<T>>> {
         // No user code runs under this lock. Recovering poison preserves any
@@ -278,6 +300,13 @@ pub struct SCCleanupContext<T> {
 }
 
 impl<T> SCCleanupContext<T> {
+    pub(crate) fn sink(&self) -> SCCleanupSink<'_, T> {
+        SCCleanupSink {
+            queue: Arc::clone(&self.queue),
+            cleanup_lifetime: PhantomData,
+        }
+    }
+
     /// Creates an empty context bound to the current thread.
     pub fn new() -> Self {
         Self {

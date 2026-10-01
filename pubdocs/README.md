@@ -4,7 +4,8 @@ Solcache is a Rust library project for reusable resource caching and publication
 services. Implemented facilities include keyed storage, retained payloads, bounded
 idle collection, shared production, consumer demand, declared allocation accounting
 and independent admission policy. Versioned publication and declared dependency
-invalidation are implemented; pools and range storage remain planned.
+invalidation, exclusive reusable pools, copied range storage and consumable
+source buffers are implemented.
 The library uses only `std`.
 
 The proposed responsibility is to coordinate resource identity, shared production,
@@ -177,6 +178,26 @@ revokes previous attempt tickets. Explicitly clone a ticket when the domain perm
 independent candidates to compete for one winner. Tickets authorize publication,
 not execution, and must remain paired with their corresponding outcomes.
 
+When combining shared production and publication, serialize this request sequence
+in the owning caller: check for a valid cached result first; otherwise call
+`begin_shared`. On `Started`, create one `begin_attempt` ticket before submitting
+the provider and keep it paired with that production through claim/publication.
+On `Joined`, retain the existing production and return or release unused input;
+do not call `begin_attempt`, because that would revoke the original ticket.
+Joined observers do not each own a result; one coordinator claims and publishes,
+and consumers share the installed backing. Serialize claim through publication
+so another request cannot start duplicate work in the gap.
+
+The map coalesces by cache identity, without comparing dependency revisions or
+input values. Invalidation requires an explicit decision about existing work;
+starting a publication round alone does not replace the map's old production.
+Settle the old attempt or remove its association and establish current consumer
+interest before starting replacement work. Removing an association neither
+cancels its old users nor transfers their demand handles to the new group.
+An old outcome must retain its old ticket and captured dependencies: assigning a
+new ticket to it defeats freshness checking. SC's independent APIs cannot verify
+that arbitrary owned bytes were actually produced under a supplied ticket.
+
 Call `publish` with the owned success or failure claimed from production after
 final access. It checks membership, current authority, current round and declared
 dependencies before installing. Validation and installation share exclusive access
@@ -231,3 +252,53 @@ tickets. No multi-resource atomic update or delivery executor is implied.
 Run [the versioned publication example](../examples/versioned_publication.rs) with
 `cargo run --example versioned_publication` for production, publication, source
 invalidation and retained-reader ownership together.
+
+## Reusable storage and source bytes
+
+`SCPool` stores caller-supplied objects with explicit layout keys and allocation
+charges. Compatible checkout returns a noncloneable `SCPoolLease`; borrowing it
+prevents return while those borrows remain active. Idle charges enter retained
+capacity, checked-out charges enter temporary use, and discarded items enter
+retirement through actual destruction. Nested owners keep their own charges.
+Mutating valid length does not lower declared capacity; growing backing beyond
+that declaration requires a newly charged item or separately charged nested owner.
+
+Reset runs on the returning caller outside pool locks. `reset_and_return` returns
+successfully reset storage; `return_to_pool` assumes the caller already reset it.
+Dropping a lease, including during a failed reset, discards its storage. `trim`
+bounds the number of idle items extracted, not destructor time. `close` and pool
+destruction drain idle items; existing leases stay usable and later returns retire.
+`with_cleanup` defers destruction to a borrowed `SCCleanupContext`, while reset
+still runs on the returning caller. Closing never claims to join external users.
+
+`SCSourceSnapshot` retains actual source context and an explicit source/revision
+identity. A provider must keep that captured revision readable; SC cannot detect
+unreported changes. `SCRangeStore` copies bytes under that snapshot and retains
+one range per source identity. `copy_prefix` reports the actual copied count and
+captures the same source for the remainder, including on a miss. Bounds are
+checked before destination changes. `take` transfers a whole `SCRangeAllocation`
+separately, retaining its capacity charge. Smaller replacement keeps capacity;
+growth accounts for overlapping allocations before committing replacement.
+
+Range occupancy is configurable; `reference` opts into sixteen entries with no
+aggregate byte cap. Hits and changed inserts use a shared sequence; an identical
+revision/offset/length insert increments only that entry's score without recopying
+bytes. The first lowest score is replaced, and empty slots are reused first.
+Identical insertion therefore requires interchangeable bytes within the declared
+revision. Score exhaustion is a checked error. Snapshots distinguish valid bytes
+from retained capacity and exclude the independently charged provider context.
+
+`SCSourceBuffers` is a separate table for whole-source ownership transfer. IDs
+must refer to one caller-defined freshness scope. Each successful nonzero read
+adds its read size, even on a duplicate; the first owner remains stored and the
+incoming duplicate owner is returned for caller cleanup. That incoming allocation
+remains charged until settled. `take` subtracts the stored read size and transfers
+the table's owner, preserving its full declared capacity and any earlier clones.
+The supplied soft limit is checked after admission: equality allows another read,
+strict excess stops the builder scope, and zero disables comparison. Taking does
+not restart a stopped builder. Close resets policy state and releases table owners;
+taken owners remain valid. The limit comes from the caller, with no OS memory query.
+
+Run [the storage reuse example](../examples/reuse.rs) with
+`cargo run --example reuse` for a copied prefix, a coherent remainder, scratch
+reuse, and whole-source transfer using only SC and `std`.

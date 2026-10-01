@@ -137,6 +137,11 @@ impl<'cleanup, K, T, E> SCPublication<'cleanup, K, T, E> {
     /// Capturing current inputs and revisions is the caller's responsibility;
     /// this operation replaces the attachment even if the supplied snapshot is
     /// stale. Declared validity is checked when publishing the owned outcome.
+    /// This is not a join operation. With `SCProductionMap::begin_shared`, call
+    /// this only for `Started` and before provider submission; a `Joined` caller
+    /// must preserve the existing round. Starting a round does not replace or
+    /// cancel the production map's associated work. Never attach a fresh ticket
+    /// to an old outcome to bypass its captured dependency validity.
     pub fn begin_attempt(
         &mut self,
         identity: &SCIdentity<K>,

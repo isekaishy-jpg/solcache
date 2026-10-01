@@ -22,6 +22,7 @@ mod production;
 mod progress;
 mod publication;
 mod range;
+mod source;
 mod storage;
 
 pub use accounting::{
@@ -42,6 +43,7 @@ pub use policy::{
     SC_REFERENCE_RANGE_ENTRIES, SCAdmission, SCAdmissionError, SCAdmissionPermit,
     SCAdmissionSnapshot, SCByteLimit, SCCountLimit, SCPolicyCounter, SCPolicyCounterError,
 };
+pub use pool::{SCPool, SCPoolClosed, SCPoolLease, SCPoolRejected, SCPoolReturn, SCPoolSnapshot};
 pub use production::{
     SCChildRejected, SCCompletionRejected, SCCompletionRejectionReason, SCProducer, SCProduction,
     SCProductionAccess, SCProductionAttempt, SCProductionClaim, SCProductionError, SCProductionMap,
@@ -52,4 +54,12 @@ pub use production::{
 pub use publication::{
     SCAuthority, SCPublication, SCPublicationAttempt, SCPublicationRejected,
     SCPublicationRejectionReason,
+};
+pub use range::{
+    SCRangeAllocation, SCRangeError, SCRangeInsert, SCRangeRead, SCRangeSnapshot, SCRangeStore,
+    SCSourceSnapshot,
+};
+pub use source::{
+    SCSourceBufferSnapshot, SCSourceBuffers, SCSourceInsert, SCSourceRejected,
+    SCSourceRejectionReason,
 };
