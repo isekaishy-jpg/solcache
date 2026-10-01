@@ -4,7 +4,8 @@
 //! and bounded idle collection. Caller-driven cleanup, declared allocation
 //! accounting and independent family policy measures preserve ownership costs.
 //! Operations are synchronous; no executor or application-specific types are needed.
-//! Shared production and versioned publication remain planned capabilities.
+//! Shared production retains demand and inputs across explicit provider decisions.
+//! Versioned publication remains a planned capability.
 //! See `pubdocs/README.md` and `examples/` for standalone use.
 
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -31,8 +32,17 @@ pub use cache::{
     SCCache, SCIdentity, SCInstallError, SCInstallErrorReason, SCInstallResult, SCLookup,
     SCRetentionReport, SCStoredPayload,
 };
+pub use demand::{SCConsumerIdentity, SCDemand, SCDemandHandle, SCDemandSnapshot, SCUrgencyUpdate};
 pub use ownership::{SCAcquisitionError, SCBacking, SCCleanupContext, SCView};
 pub use policy::{
     SC_REFERENCE_PAYLOAD_RETENTION, SC_REFERENCE_PRODUCTION_LIMIT, SC_REFERENCE_PROVIDER_SLOTS,
-    SC_REFERENCE_RANGE_ENTRIES, SCByteLimit, SCCountLimit, SCPolicyCounter, SCPolicyCounterError,
+    SC_REFERENCE_RANGE_ENTRIES, SCAdmission, SCAdmissionError, SCAdmissionPermit,
+    SCAdmissionSnapshot, SCByteLimit, SCCountLimit, SCPolicyCounter, SCPolicyCounterError,
+};
+pub use production::{
+    SCChildRejected, SCCompletionRejected, SCCompletionRejectionReason, SCProducer, SCProduction,
+    SCProductionAccess, SCProductionAttempt, SCProductionClaim, SCProductionError, SCProductionMap,
+    SCProductionPhase, SCProductionSnapshot, SCProductionStart, SCProviderDecision,
+    SCRejectedSubmission, SCStartRejected, SCStartRejectionReason, SCSubmission,
+    SCSubmissionOutcome,
 };

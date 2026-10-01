@@ -2,8 +2,8 @@
 
 Solcache is a Rust library project for reusable resource caching and publication
 services. Implemented facilities include keyed storage, retained payloads, bounded
-idle collection, declared allocation accounting and independent policy primitives.
-Shared production, versioned publication, pools and range storage remain planned.
+idle collection, shared production, consumer demand, declared allocation accounting
+and independent admission policy. Versioned publication, pools and range storage remain planned.
 The library uses only `std`.
 
 The proposed responsibility is to coordinate resource identity, shared production,
@@ -110,3 +110,59 @@ charge. Explicit removal/take can release such aliases.
 Run [the keyed cache example](../examples/keyed_cache.rs) with
 `cargo run --example keyed_cache` to see pressure, pin release, identity survival
 and deferred cleanup together.
+
+## Production and consumer demand
+
+`SCDemand` owns independent interests through nonclone `SCDemandHandle` values.
+Detaching one consumer preserves all others and never cancels producer access.
+Updates carry caller-supplied per-consumer revisions: only a strictly newer
+revision applies, including urgency decreases. Larger urgency values take priority.
+Snapshots report maximum urgency and consumer count; `is_current` detects changes
+at observation time, without serializing a later executor priority update.
+
+`SCProductionMap` associates demand and shared attempts with `SCIdentity` tokens.
+`interest` creates demand without work. `begin_shared` joins pending or unclaimed
+completed work and returns unused input to its caller, or explicitly starts a new
+attempt. Rejection, abort, claimed outcomes and settled abandonment permit retry;
+rejection does not erase demand. `begin_candidate` starts independent owned work
+for domains that permit multiple candidates. Candidate publication and winner
+selection remain the caller's responsibility until publication support lands.
+Association removal preserves escaped access owners and existing consumers.
+
+`SCProduction::prepare` creates observation and input ownership before invoking a
+provider. `SCSubmission::submit` invokes the provider synchronously, outside
+bookkeeping locks. The provider must return actual acceptance or return the same
+root producer on rejection. Inline `complete` stages success or failure; a result
+can be claimed only after acceptance and release of every producer/access guard.
+Accepted work ending without completion reports abandonment. Provider unwinding
+aborts the attempt without revoking escaped guards. Duplicate/late completion
+returns the supplied outcome. Invalid rejection preserves the foreign producer
+and aborts the original attempt.
+
+`SCProducer::consume_inputs` moves input into a separately counted access guard;
+rejection returns only unconsumed input and any staged outcome. Consumed guards
+remain owned and observable through rejection. Child guards can retain discovered
+inputs or continuation state, including nested discovery after the root ends;
+they cannot complete the root. Hold each guard through actual external last use.
+Mutable access to inputs does not prove device or provider quiescence. Consumer
+detachment, callback return, completion and dropping a provider slot are distinct
+from final access.
+
+`SCAdmission` reserves checked counts through nonclone permits. Use independent
+domains for production allowances and provider slots, with the opt-in reference
+limits of 16 and 8. The map reserves production allowance; direct users can pass
+a permit to `prepare_with_permit`. It releases after submission settlement and
+final access, independently of result claim or observer lifetime. Provider-slot
+permits follow the caller's provider operation. Neither domain counts retained
+bytes or executor workers. Lowering a limit preserves existing reservations.
+
+These APIs allocate shared bookkeeping and synchronously lock primitive state;
+demand snapshots scan consumer table capacity. User providers and destructors run
+outside internal locks. The map requires owner-side serialization. Joined
+observers do not reserve an outcome; coordinate claim and cache application in
+the owning caller. Association alone proves neither current cache membership nor
+publication validity. No work is scheduled, retried or canceled implicitly.
+
+Run [the production example](../examples/shared_production.rs) with
+`cargo run --example shared_production` to see inline completion, consumed input,
+and independent production/provider admission.

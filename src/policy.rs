@@ -1,11 +1,14 @@
 //! Independent policy measures and explicit count/byte comparisons.
 //!
-//! These operations do not reserve resources, evict values or impose an aggregate
-//! memory ceiling. Callers serialize their policy decisions with the state they
-//! govern and choose the appropriate admission or maintenance point.
+//! Threshold comparisons do not reserve resources. Admission domains explicitly
+//! reserve independent counts; none of these operations evicts values or imposes
+//! an aggregate memory ceiling. Callers choose each admission or maintenance point.
 
 use std::error::Error;
 use std::fmt;
+
+mod admission;
+pub use admission::{SCAdmission, SCAdmissionError, SCAdmissionPermit, SCAdmissionSnapshot};
 
 /// A count threshold, separate from bytes and execution concurrency.
 ///
