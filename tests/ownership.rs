@@ -47,6 +47,28 @@ impl Drop for Tracked {
 }
 
 #[test]
+fn class_changes_require_exclusive_backing_and_preserve_its_charge() {
+    let domain = SCAccountingDomain::new();
+    let mut owner =
+        SCBacking::try_new(vec![1_u8, 2, 3], &domain, 3, SCAllocationClass::Temporary).unwrap();
+    assert!(owner.is_unique());
+    assert_eq!(owner.declared_bytes(), 3);
+    let shared = owner.clone();
+    assert!(!owner.is_unique());
+    assert!(!owner.try_transition(SCAllocationClass::Resident));
+    assert_eq!(shared.allocation_class(), SCAllocationClass::Temporary);
+    assert_eq!(domain.snapshot().temporary_bytes, 3);
+    drop(shared);
+    assert!(owner.try_transition(SCAllocationClass::Resident));
+    assert_eq!(owner.allocation_class(), SCAllocationClass::Resident);
+    assert_eq!(domain.snapshot().temporary_bytes, 0);
+    assert_eq!(domain.snapshot().resident_bytes, 3);
+    assert_eq!(owner.view().get(), &[1, 2, 3]);
+    drop(owner);
+    assert_eq!(domain.snapshot().total_declared_bytes, 0);
+}
+
+#[test]
 fn acquisition_rejection_preserves_the_original_value_and_counters() {
     let domain = SCAccountingDomain::new();
     let existing = domain

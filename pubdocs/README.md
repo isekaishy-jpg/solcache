@@ -1,9 +1,10 @@
 # Solcache
 
 Solcache is a Rust library project for reusable resource caching and publication
-services. The first implementation stage provides ownership, declared allocation
-accounting and independent policy primitives. Keyed caching, shared production,
-publication, pools and range storage remain planned. The library uses only `std`.
+services. Implemented facilities include keyed storage, retained payloads, bounded
+idle collection, declared allocation accounting and independent policy primitives.
+Shared production, versioned publication, pools and range storage remain planned.
+The library uses only `std`.
 
 The proposed responsibility is to coordinate resource identity, shared production,
 consumer interest, reusable results, residency, invalidation, and cache publication.
@@ -40,8 +41,8 @@ memory: caller costs need to describe the backing being retained. A bare
 `SCAllocationCharge` can transition class or transfer between domains; failure
 returns the original charge. `SCBacking::from_charged` and
 `SCCleanupContext::acquire_charged` bind an existing charge without releasing and
-reacquiring it. Once bound, the acquisition class stays fixed until final release
-transitions it to retiring. Shared backing has no class/domain mutation API yet.
+reacquiring it. `try_transition` changes class only with exclusive ownership;
+shared owners cannot change class or domain. Final release enters retirement.
 
 `SCPolicyCounter`, `SCCountLimit` and `SCByteLimit` keep family policy separate
 from allocation accounting. Comparisons do not reserve resources. Byte thresholds
@@ -58,3 +59,54 @@ subject to its own synchronization contract.
 Run the [standalone ownership example](../examples/foundation.rs) with
 `cargo run --example foundation`. Run `cargo test` for ownership, accounting and
 policy contract tests. No executor, game types or adapter are required.
+
+## Keyed storage and retention
+
+`SCCache<K, T, E>` owns one typed key namespace. Include representation and source
+scope in your key, or use separate cache instances where those meanings differ.
+Keys use stable semantic `Hash` and `Eq`; a hash collision never establishes
+identity. `SCIdentity<K>` remains valid through payload eviction and replacement,
+but removal/recreation creates a new identity even if a storage slot is reused.
+An identity handle alone does not retain a payload or the table.
+
+`ensure` creates logical membership. `lookup` borrows a ready payload, `share`
+clones its backing owner, and `take` moves the table's owner while leaving vacant
+membership. `SCLookup` distinguishes absent, vacant, failed and ready outcomes.
+Missing lookups start no work or consumer demand. A failed entry is not a ready
+hit. A taken owner can still have other shared owners; taking does not promise
+exclusive access to T.
+
+`install` accepts backing in the Resident allocation class and an explicit
+per-entry policy cost. Its result returns the stable identity and displaced owned
+state. Overflow or an invalid class returns the supplied key, backing and policy
+cost without changing membership. `fail` records a caller-supplied error;
+`clear_payload` detaches state while preserving identity; `remove` also removes
+membership. Displaced owners remain the caller's cleanup responsibility.
+
+Mutations require `&mut SCCache`; borrowed views prevent removal, replacement and
+collection for their lifetime. Shared/taken owners survive these operations and
+table destruction. The table has no internal mutex; applications choose their
+own synchronization or owner phase. User key operations and direct destructors
+run on the calling thread. Wrapping a cache in an application lock also wraps any
+user code those operations invoke, so arrange such calling contexts explicitly.
+
+`maintain(limit, max_slots, force)` collects only payloads solely owned by their
+cache slot. Sharing revives and pins an idle payload; releasing the final external
+owner makes it eligible again. Forced collection also respects pins. Collection
+keeps identity, removes the policy cost, and releases backing through its cleanup
+contract. Deferred payloads remain accounted as retiring until their context drains.
+Use `SC_REFERENCE_PAYLOAD_RETENTION` for the opt-in 32 MiB reference collection
+target; other families can explicitly select their own `SCByteLimit` comparison.
+
+Work is bounded by examined physical slots, including holes and failed/pinned
+entries, with a cursor that resumes later. `SCRetentionReport` reports visits,
+evictions, pins encountered and remaining byte pressure. These are observations
+of that pass, not a global pin census or a wall-clock bound on user destructors.
+Slots retain peak membership storage; removal makes slots reusable. If the same
+backing occupies multiple slots, those owners conservatively pin one another.
+Each slot has an independent policy cost; its backing still has only one physical
+charge. Explicit removal/take can release such aliases.
+
+Run [the keyed cache example](../examples/keyed_cache.rs) with
+`cargo run --example keyed_cache` to see pressure, pin release, identity survival
+and deferred cleanup together.

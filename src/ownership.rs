@@ -132,6 +132,54 @@ impl<T> SCBacking<'static, T> {
 }
 
 impl<T> SCBacking<'_, T> {
+    /// Observes whether this is currently the only shared owner.
+    ///
+    /// Counts include cache slots as well as escaped handles. This observation
+    /// does not grant mutable access or reserve uniqueness against a concurrent
+    /// clone through another reference. Use [`Self::try_transition`] for an
+    /// exclusive accounting-class change.
+    pub fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.backing) == 1
+    }
+
+    /// Returns the complete caller-declared cost retained by this backing.
+    pub fn declared_bytes(&self) -> u64 {
+        self.backing
+            .record
+            .as_ref()
+            .expect("live backing always retains its cleanup record")
+            .charge
+            .declared_bytes()
+    }
+
+    /// Returns the current allocation class shared by this backing's owners.
+    pub fn allocation_class(&self) -> SCAllocationClass {
+        self.backing
+            .record
+            .as_ref()
+            .expect("live backing always retains its cleanup record")
+            .charge
+            .class()
+    }
+
+    /// Changes the allocation class only while exclusively owning the backing.
+    ///
+    /// Returns false without mutation if another owner exists. The total charge,
+    /// domain and payload remain unchanged; this grants no external final-use
+    /// permission. Class changes are unavailable through shared owners.
+    pub fn try_transition(&mut self, class: SCAllocationClass) -> bool {
+        let Some(backing) = Arc::get_mut(&mut self.backing) else {
+            return false;
+        };
+        backing
+            .record
+            .as_mut()
+            .expect("live backing always retains its cleanup record")
+            .charge
+            .transition(class);
+        true
+    }
+
     /// Borrows the payload without adding an owner or allocation charge.
     pub fn view(&self) -> SCView<'_, T> {
         let record = self

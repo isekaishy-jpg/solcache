@@ -1,10 +1,11 @@
 //! Resource caching and publication services.
 //!
-//! The ownership foundation provides retained backing, scoped views, caller-driven
-//! cleanup, declared allocation accounting and independent family policy measures.
+//! Keyed storage provides cache-scoped identity, retained backing, scoped views
+//! and bounded idle collection. Caller-driven cleanup, declared allocation
+//! accounting and independent family policy measures preserve ownership costs.
 //! Operations are synchronous; no executor or application-specific types are needed.
-//! Keyed caching, production and publication remain planned capabilities.
-//! See `pubdocs/README.md` and `examples/foundation.rs` for standalone use.
+//! Shared production and versioned publication remain planned capabilities.
+//! See `pubdocs/README.md` and `examples/` for standalone use.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -25,6 +26,10 @@ mod storage;
 pub use accounting::{
     SCAccountingDomain, SCAccountingError, SCAccountingSnapshot, SCAllocationCharge,
     SCAllocationClass, SCChargeTransferFailure,
+};
+pub use cache::{
+    SCCache, SCIdentity, SCInstallError, SCInstallErrorReason, SCInstallResult, SCLookup,
+    SCRetentionReport, SCStoredPayload,
 };
 pub use ownership::{SCAcquisitionError, SCBacking, SCCleanupContext, SCView};
 pub use policy::{
