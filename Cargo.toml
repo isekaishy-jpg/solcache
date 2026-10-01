@@ -1,0 +1,12 @@
+[package]
+name = "solcache"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+readme = "pubdocs/README.md"
+description = "Reusable resource caching and publication services (research scaffold)"
+
+[dependencies]
+
+[profile.bench]
+debug = 1
