@@ -94,6 +94,18 @@ pub struct SCInstallError<'cleanup, K, T> {
 pub type SCInstallResult<'cleanup, K, T, E = ()> =
     Result<(SCIdentity<K>, SCStoredPayload<'cleanup, T, E>), SCInstallError<'cleanup, K, T>>;
 
+pub(crate) enum IdentityReplaceReason {
+    Missing,
+    InvalidClass,
+    PolicyOverflow,
+}
+
+pub(crate) struct IdentityReplaceFailure<'cleanup, T, E> {
+    pub(crate) payload: SCStoredPayload<'cleanup, T, E>,
+    pub(crate) policy_bytes: u64,
+    pub(crate) reason: IdentityReplaceReason,
+}
+
 impl<'cleanup, K, T> SCInstallError<'cleanup, K, T> {
     pub fn reason(&self) -> SCInstallErrorReason {
         self.reason
@@ -131,7 +143,7 @@ pub struct SCCache<'cleanup, K, T, E = ()> {
     pub(super) policy_bytes: u64,
 }
 
-impl<K, T, E> SCCache<'_, K, T, E> {
+impl<'cleanup, K, T, E> SCCache<'cleanup, K, T, E> {
     pub fn new() -> Self {
         Self {
             storage: Storage::new(),
@@ -152,7 +164,7 @@ impl<K, T, E> SCCache<'_, K, T, E> {
     pub fn contains_identity(&self, identity: &SCIdentity<K>) -> bool {
         self.entry_identity(identity).is_some()
     }
-    fn entry_identity(&self, identity: &SCIdentity<K>) -> Option<&Entry<'_, K, T, E>> {
+    fn entry_identity(&self, identity: &SCIdentity<K>) -> Option<&Entry<'cleanup, K, T, E>> {
         if !Arc::ptr_eq(&self.storage.namespace, &identity.token.namespace) {
             return None;
         }
@@ -165,6 +177,66 @@ impl<K, T, E> SCCache<'_, K, T, E> {
     /// Borrows ready backing by handle; foreign or removed membership is absent.
     pub fn lookup_identity(&self, identity: &SCIdentity<K>) -> SCLookup<'_, SCView<'_, T>, E> {
         observe(self.entry_identity(identity))
+    }
+
+    /// Acquires ready backing by identity without invoking key callbacks.
+    /// Foreign or removed membership is absent; the returned owner survives
+    /// subsequent replacement, invalidation and table removal.
+    pub fn share_identity(
+        &self,
+        identity: &SCIdentity<K>,
+    ) -> SCLookup<'_, SCBacking<'cleanup, T>, E> {
+        match self.entry_identity(identity).map(|entry| &entry.state) {
+            None => SCLookup::Absent,
+            Some(SCStoredPayload::Vacant) => SCLookup::Vacant,
+            Some(SCStoredPayload::Failed(error)) => SCLookup::Failed(error),
+            Some(SCStoredPayload::Ready(backing)) => SCLookup::Ready(backing.clone()),
+        }
+    }
+
+    /// Publication commits against a protected identity after validating its
+    /// authority. No key callbacks or displaced payload destructors run here.
+    /// All fallible checks precede changes; failure returns the original input.
+    pub(crate) fn replace_identity(
+        &mut self,
+        identity: &SCIdentity<K>,
+        payload: SCStoredPayload<'cleanup, T, E>,
+        policy_bytes: u64,
+    ) -> Result<SCStoredPayload<'cleanup, T, E>, IdentityReplaceFailure<'cleanup, T, E>> {
+        let Some(entry) = self.entry_identity(identity) else {
+            return Err(IdentityReplaceFailure {
+                payload,
+                policy_bytes,
+                reason: IdentityReplaceReason::Missing,
+            });
+        };
+        let ready = if let SCStoredPayload::Ready(backing) = &payload {
+            if backing.allocation_class() != SCAllocationClass::Resident {
+                return Err(IdentityReplaceFailure {
+                    payload,
+                    policy_bytes,
+                    reason: IdentityReplaceReason::InvalidClass,
+                });
+            }
+            true
+        } else {
+            false
+        };
+        let next_cost = if ready { policy_bytes } else { 0 };
+        let Some(total) = (self.policy_bytes - entry.policy_bytes).checked_add(next_cost) else {
+            return Err(IdentityReplaceFailure {
+                payload,
+                policy_bytes,
+                reason: IdentityReplaceReason::PolicyOverflow,
+            });
+        };
+        let entry = self.storage.slots[identity.token.slot]
+            .as_mut()
+            .expect("validated identity remains present under exclusive access");
+        let previous = std::mem::replace(&mut entry.state, payload);
+        entry.policy_bytes = next_cost;
+        self.policy_bytes = total;
+        Ok(previous)
     }
 }
 impl<K, T, E> Default for SCCache<'_, K, T, E> {
@@ -369,6 +441,16 @@ impl<'cleanup, K: Eq + Hash, T, E> SCCache<'cleanup, K, T, E> {
     }
     /// Removes membership and returns its state. Independent owners survive removal.
     pub fn remove(&mut self, key: &K) -> Option<(SCIdentity<K>, SCStoredPayload<'cleanup, T, E>)> {
+        let entry = self.remove_entry(key)?;
+        // The table and counters are coherent before arbitrary key destruction.
+        drop(entry.key);
+        Some((entry.identity, entry.state))
+    }
+
+    /// Detaches membership without running key or payload destructors. Layered
+    /// coordinators can settle their own metadata before user cleanup can unwind.
+    /// Hash/Eq callbacks still run before any membership change.
+    pub(crate) fn remove_entry(&mut self, key: &K) -> Option<Entry<'cleanup, K, T, E>> {
         let hash = self.storage.keys.hasher().hash_one(key);
         let (slot, previous) = self.find_hashed(hash, key)?;
         self.storage.free.reserve(1);
@@ -387,9 +469,7 @@ impl<'cleanup, K: Eq + Hash, T, E> SCCache<'cleanup, K, T, E> {
         }
         self.policy_bytes -= entry.policy_bytes;
         self.storage.free.push(slot);
-        // The table and counters are coherent before arbitrary key destruction.
-        drop(entry.key);
-        Some((entry.identity, entry.state))
+        Some(entry)
     }
 }
 

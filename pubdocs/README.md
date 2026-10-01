@@ -3,7 +3,8 @@
 Solcache is a Rust library project for reusable resource caching and publication
 services. Implemented facilities include keyed storage, retained payloads, bounded
 idle collection, shared production, consumer demand, declared allocation accounting
-and independent admission policy. Versioned publication, pools and range storage remain planned.
+and independent admission policy. Versioned publication and declared dependency
+invalidation are implemented; pools and range storage remain planned.
 The library uses only `std`.
 
 The proposed responsibility is to coordinate resource identity, shared production,
@@ -125,8 +126,8 @@ at observation time, without serializing a later executor priority update.
 completed work and returns unused input to its caller, or explicitly starts a new
 attempt. Rejection, abort, claimed outcomes and settled abandonment permit retry;
 rejection does not erase demand. `begin_candidate` starts independent owned work
-for domains that permit multiple candidates. Candidate publication and winner
-selection remain the caller's responsibility until publication support lands.
+for domains that permit multiple candidates. Pair each owned outcome with a
+publication ticket to let `SCPublication` validate and select a winner.
 Association removal preserves escaped access owners and existing consumers.
 
 `SCProduction::prepare` creates observation and input ownership before invoking a
@@ -166,3 +167,67 @@ publication validity. No work is scheduled, retried or canceled implicitly.
 Run [the production example](../examples/shared_production.rs) with
 `cargo run --example shared_production` to see inline completion, consumed input,
 and independent production/provider admission.
+
+## Publication and declared dependencies
+
+`SCPublication<K, T, E>` owns a keyed cache and its publication authority. `ensure`
+creates membership; `begin_attempt` attaches a fresh publication round and captures
+a supplied dependency snapshot without erasing the existing payload. A new round
+revokes previous attempt tickets. Explicitly clone a ticket when the domain permits
+independent candidates to compete for one winner. Tickets authorize publication,
+not execution, and must remain paired with their corresponding outcomes.
+
+Call `publish` with the owned success or failure claimed from production after
+final access. It checks membership, current authority, current round and declared
+dependencies before installing. Validation and installation share exclusive access
+to the coordinator and a borrowed dependency registry. The first successful
+installation closes the round. Stale candidates and installation errors return
+the exact owned result and policy cost in `SCPublicationRejected`. Rejection leaves
+the current payload and pending attachment intact. Successful installation returns
+the displaced `SCStoredPayload` for caller cleanup; escaped old readers remain valid.
+
+Successful backing must be Resident. Invalid allocation class and policy overflow
+preserve the prior state and retry eligibility. An accepted failure installs failed
+membership with zero retained-payload policy cost; it is not a usable hit. Return
+values preserve ownership, including failures, without calling user destructors
+during the validity/installation commit.
+
+`SCDependencies` is an independently usable, caller-serialized revision registry.
+Register source, representation, instance, view and device declarations separately.
+Capture the selected declarations with `snapshot`; `advance` validates the complete
+selected set before changing it, deduplicating repeated handles. Fresh opaque
+identity/revision tokens prevent numeric wrap and removed-handle resurrection.
+Even empty snapshots belong to their originating registry.
+
+Propagation is explicit: the domain enumerates affected declarations. Captured
+snapshots containing an advanced or removed declaration become invalid, while
+unrelated scopes remain current. There is no inferred dependency graph or domain
+mutation discovery. Retain actual backing separately, and serialize domain changes
+with revision notification. Registry lookups are linear; capturing/advancing sets
+allocates bookkeeping. These operations provide no performance or time-bound claim.
+
+`lookup` and `share` on the publication coordinator validate stored dependencies
+before returning a ready value or retained failure. Stale, removed and foreign
+dependencies are typed errors. Existing borrowed or owned readers keep their
+backing; invalidation blocks future reuse without destroying those readers.
+`maintain` forwards bounded collection with the same pin and budget rules as the
+keyed cache. Eviction preserves membership and pending attachment; a vacant entry
+has no retained payload validity to check. `into_cache` consumes the coordinator
+and explicitly discards its validity checks.
+
+Authoritative metadata uses a separate path. `clear` removes payload and pending
+attempt attachment while preserving authority. `authoritative` can repopulate
+that entry without an attempt ticket. Passing an `SCAuthority` captured from
+`authority` checks its local context; `replace_authority` clears the entry and
+revokes prior tagged deliveries. Passing `None` means the caller vouches for the
+current transport authority. SC cannot identify old untagged wire messages: bind
+delivery to real provider context or settle the old stream before switching.
+A successful authoritative update also revokes the pending attempt; a rejected
+update does not. Its dependency snapshot is borrowed: retry using the original
+captured stamp instead of recapturing newer revisions for an old payload.
+`remove` destroys membership, so slot reuse cannot revive old
+tickets. No multi-resource atomic update or delivery executor is implied.
+
+Run [the versioned publication example](../examples/versioned_publication.rs) with
+`cargo run --example versioned_publication` for production, publication, source
+invalidation and retained-reader ownership together.

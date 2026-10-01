@@ -5,7 +5,7 @@
 //! accounting and independent family policy measures preserve ownership costs.
 //! Operations are synchronous; no executor or application-specific types are needed.
 //! Shared production retains demand and inputs across explicit provider decisions.
-//! Versioned publication remains a planned capability.
+//! Publication validates current authority and declared dependency revisions.
 //! See `pubdocs/README.md` and `examples/` for standalone use.
 
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -33,6 +33,9 @@ pub use cache::{
     SCRetentionReport, SCStoredPayload,
 };
 pub use demand::{SCConsumerIdentity, SCDemand, SCDemandHandle, SCDemandSnapshot, SCUrgencyUpdate};
+pub use dependency::{
+    SCDependencies, SCDependency, SCDependencyError, SCDependencyScope, SCDependencySnapshot,
+};
 pub use ownership::{SCAcquisitionError, SCBacking, SCCleanupContext, SCView};
 pub use policy::{
     SC_REFERENCE_PAYLOAD_RETENTION, SC_REFERENCE_PRODUCTION_LIMIT, SC_REFERENCE_PROVIDER_SLOTS,
@@ -45,4 +48,8 @@ pub use production::{
     SCProductionPhase, SCProductionSnapshot, SCProductionStart, SCProviderDecision,
     SCRejectedSubmission, SCStartRejected, SCStartRejectionReason, SCSubmission,
     SCSubmissionOutcome,
+};
+pub use publication::{
+    SCAuthority, SCPublication, SCPublicationAttempt, SCPublicationRejected,
+    SCPublicationRejectionReason,
 };
