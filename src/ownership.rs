@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::accounting::{
     SCAccountingDomain, SCAccountingError, SCAllocationCharge, SCAllocationClass,
 };
+use crate::progress::SCCleanupSnapshot;
 
 /// An acquisition failure that preserves the supplied value.
 pub struct SCAcquisitionError<T> {
@@ -44,7 +45,28 @@ struct CleanupRecord<T> {
 }
 
 struct CleanupQueue<T> {
-    records: Mutex<Vec<CleanupRecord<T>>>,
+    state: Mutex<CleanupState<T>>,
+}
+
+struct CleanupState<T> {
+    records: Vec<CleanupRecord<T>>,
+    in_flight_records: usize,
+}
+
+// Field order keeps the record in flight through payload and charge destruction.
+struct InFlightRecord<'queue, T> {
+    _record: CleanupRecord<T>,
+    _completion: CleanupCompletion<'queue, T>,
+}
+
+struct CleanupCompletion<'queue, T> {
+    queue: &'queue CleanupQueue<T>,
+}
+
+impl<T> Drop for CleanupCompletion<'_, T> {
+    fn drop(&mut self) {
+        self.queue.state().in_flight_records -= 1;
+    }
 }
 
 // Exclusive owners use the same scoped retirement queue as shared backing.
@@ -65,24 +87,38 @@ impl<T> Clone for SCCleanupSink<'_, T> {
 impl<T> SCCleanupSink<'_, T> {
     pub(crate) fn retire(&self, value: T, mut charge: SCAllocationCharge) {
         charge.transition(SCAllocationClass::Retiring);
-        self.queue.records().push(CleanupRecord { value, charge });
+        self.queue
+            .state()
+            .records
+            .push(CleanupRecord { value, charge });
     }
 }
 
 impl<T> CleanupQueue<T> {
-    fn records(&self) -> MutexGuard<'_, Vec<CleanupRecord<T>>> {
+    fn state(&self) -> MutexGuard<'_, CleanupState<T>> {
         // No user code runs under this lock. Recovering poison preserves any
         // retained records if an unexpected bookkeeping panic occurred.
-        self.records
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+        self.state.lock().unwrap_or_else(|error| error.into_inner())
     }
 
-    fn drain(&self) -> usize {
-        let records = std::mem::take(&mut *self.records());
+    fn drain_budget(&self, maximum_records: usize) -> usize {
+        let records = {
+            let mut state = self.state();
+            let count = maximum_records.min(state.records.len());
+            // Allocate before committing extraction so an allocation failure
+            // cannot leave a record outside either processing count.
+            let mut selected = Vec::with_capacity(count);
+            let start = state.records.len() - count;
+            state.in_flight_records += count;
+            selected.extend(state.records.drain(start..).map(|record| InFlightRecord {
+                _record: record,
+                _completion: CleanupCompletion { queue: self },
+            }));
+            selected
+        };
         let count = records.len();
-        // The bookkeeping guard has ended before any payload destructor runs.
-        // Unwinding drops the remaining extracted records on this same thread.
+        // Field destruction releases each processing count only after its
+        // payload and charge, including remaining records dropped on unwind.
         drop(records);
         count
     }
@@ -98,7 +134,7 @@ impl<T> Drop for Backing<T> {
         if let Some(mut record) = self.record.take() {
             record.charge.transition(SCAllocationClass::Retiring);
             if let Some(cleanup) = &self.cleanup {
-                cleanup.records().push(record);
+                cleanup.state().records.push(record);
             } else {
                 drop(record);
             }
@@ -311,7 +347,10 @@ impl<T> SCCleanupContext<T> {
     pub fn new() -> Self {
         Self {
             queue: Arc::new(CleanupQueue {
-                records: Mutex::new(Vec::new()),
+                state: Mutex::new(CleanupState {
+                    records: Vec::new(),
+                    in_flight_records: 0,
+                }),
             }),
             owner_thread: PhantomData,
         }
@@ -354,12 +393,37 @@ impl<T> SCCleanupContext<T> {
     /// If one panics, unwinding still releases its charge and destroys the other
     /// extracted records; records not yet extracted remain owned by the queue.
     pub fn drain(&self) -> usize {
-        self.queue.drain()
+        self.queue.drain_budget(usize::MAX)
+    }
+
+    /// Destroys at most `maximum_records` from the currently queued batch.
+    ///
+    /// The budget counts records, not destructor time. Zero executes no cleanup.
+    /// Selection order is unspecified. Unselected records and records arriving
+    /// after extraction remain queued.
+    /// Destructors execute outside locks on this thread. If one panics, the
+    /// remaining selected records are destroyed during unwinding; unselected
+    /// records remain queued. Reentrant drains may execute additional records
+    /// under their own budgets.
+    pub fn drain_budget(&self, maximum_records: usize) -> usize {
+        self.queue.drain_budget(maximum_records)
+    }
+
+    /// Observes queued and extracted cleanup under one bookkeeping lock.
+    ///
+    /// This does not execute cleanup or observe live owners and external users.
+    pub fn snapshot(&self) -> SCCleanupSnapshot {
+        let state = self.queue.state();
+        SCCleanupSnapshot {
+            pending_records: state.records.len(),
+            in_flight_records: state.in_flight_records,
+        }
     }
 
     /// Reports queued records; concurrent final releases may change this count.
+    /// Extracted destruction is reported separately by [`Self::snapshot`].
     pub fn pending(&self) -> usize {
-        self.queue.records().len()
+        self.snapshot().pending_records
     }
 }
 
@@ -371,6 +435,6 @@ impl<T> Default for SCCleanupContext<T> {
 
 impl<T> Drop for SCCleanupContext<T> {
     fn drop(&mut self) {
-        self.queue.drain();
+        self.queue.drain_budget(usize::MAX);
     }
 }

@@ -333,6 +333,62 @@ SC accounting. A rejected transfer retains the result and its original publicati
 ticket for an explicit retry. No adapter or SW dependency is added to SC itself.
 
 Run it with `cargo run --locked --manifest-path examples/solworker/Cargo.toml`.
-Its four integration tests run separately with
+Its integration tests run separately with
 `cargo test --locked --manifest-path examples/solworker/Cargo.toml`; the root
 package's test command does not include this standalone package.
+
+## Closure, maintenance and observation
+
+`SCAdmission::close` permanently stops new reservations across every clone of
+that count domain. Increasing its limit cannot reopen it. Rejection reports
+`Closed` separately from capacity pressure and retains production input. Existing
+permits remain owned; a prepared submission can still be submitted, shared callers
+can join existing production, and accepted accesses can discover children. Those
+operations extend already-admitted work rather than reopening root admission.
+
+`SCAdmissionSnapshot::is_drained` means only that this domain is closed and its
+permits have ended. Production-bound permits last through submission and final
+SC access, but not through unclaimed results or escaped output ownership. A
+provider-slot domain can drain while a separate external accessor is still live.
+Every root entry point belonging to a host's close scope must use that scope's
+admission gate; independent facilities do not inherit closure automatically.
+
+Keep provider and owner services alive while stopping them can still deliver
+callbacks or accepted discovery. Drive final access and delivery in their required
+contexts before dismantling those services. A failed stop or wait retains the
+provider state, its pending obligations and actual backing for later settlement.
+Cache removal, pool/range/source closure and executor shutdown do not invalidate
+escaped backing, checked-out leases or taken allocations.
+
+`SCCleanupContext::drain_budget(maximum_records)` extracts at most that many
+currently queued records. Zero performs no cleanup; unselected and newly queued
+records remain owned. Selection order is unspecified. Destructors run outside
+bookkeeping locks on the context thread, and charges remain live through them.
+A destructor panic unwinds the selected batch while leaving unselected records
+queued. Reentrant drains have their own budgets. The budget bounds selected
+records, not arbitrary destructor time. Existing `drain` and context destruction
+still process the whole current batch.
+
+Observe each domain separately; there is no aggregate shutdown receipt:
+
+| Observation | Meaning and limit |
+| --- | --- |
+| Admission snapshot | Closed gate, active permits and configured count limit. |
+| Production snapshot | Acceptance, recorded outcome, active access capabilities and claim state; completion alone is not readiness. |
+| Publication rejection | Original owned candidate plus the authority, attempt or dependency reason it could not be applied. |
+| Pool snapshot | Closed state, idle storage and outstanding checkouts; excludes pending physical cleanup. |
+| Retention report | Slots actually scanned, encountered pins and remaining policy pressure; does not free live owners. |
+| Range/source snapshot | Storage retained by that facility, separate from taken allocations and source contexts. |
+| Cleanup snapshot | Queued records and extracted destruction still in flight, including reentrant destruction; excludes live backing owners. |
+| Accounting snapshot | Declared allocation costs through actual destruction; zero bytes can still leave zero-cost cleanup records. |
+
+Cache maintenance budgets count physical slots, pool trim budgets count items,
+and cleanup budgets count records. They are independent of family byte thresholds.
+Existing all-at-once facility `close` calls are not budgeted maintenance. Snapshot
+reads execute no callbacks and separate snapshots are not a coherent global view.
+
+The [integrated shutdown tests](../tests/shutdown.rs) use real bytes with a
+simulated callback-producing provider, an actual timed-out wait, and escaped
+facility owners. The [SW shutdown test](../examples/solworker/tests/shutdown.rs)
+keeps actual owner delivery service alive after runtime root closure and verifies
+that a joined executor does not retire its escaped SC output.

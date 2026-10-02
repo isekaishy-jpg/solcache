@@ -51,6 +51,7 @@ pub use production::{
     SCRejectedSubmission, SCStartRejected, SCStartRejectionReason, SCSubmission,
     SCSubmissionOutcome,
 };
+pub use progress::SCCleanupSnapshot;
 pub use publication::{
     SCAuthority, SCPublication, SCPublicationAttempt, SCPublicationRejected,
     SCPublicationRejectionReason,

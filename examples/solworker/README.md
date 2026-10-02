@@ -67,3 +67,10 @@ then pumps the owner until delivery completes. Terminal group status alone does
 not certify subscriber activation. This finite fixture is not a general host event
 loop. The root package's checks do not include this separate manifest. Add
 `--offline` to these commands when Solworker's locked dependencies are cached.
+
+The separate [shutdown case](tests/shutdown.rs) closes SC root admission and
+starts SW shutdown while an accepted producer is gated. `try_shutdown` reports
+incomplete settlement while the host retains and pumps owner delivery. The output
+is then moved out of the owner, remains usable after worker join, and retires only
+after its final SC owner is released and bounded cleanup is serviced. This test
+does not introduce a shutdown coordinator or another execution abstraction.

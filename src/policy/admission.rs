@@ -11,13 +11,16 @@ use super::SCCountLimit;
 pub struct SCAdmissionSnapshot {
     pub active: usize,
     pub limit: usize,
+    /// Permanent root closure; active reservations remain independently owned.
+    pub closed: bool,
 }
 
 /// A caller-selected count domain with synchronous checked admission.
 ///
 /// Use separate domains for production attempts and active provider operations.
 /// Clones observe and reserve the same domain. Lowering a limit never revokes
-/// accepted permits. Bookkeeping locks never invoke caller code.
+/// accepted permits. Permanent closure rejects future reservations even if the
+/// limit is raised. Bookkeeping locks never invoke caller code.
 #[derive(Clone)]
 pub struct SCAdmission {
     state: Arc<Mutex<SCAdmissionSnapshot>>,
@@ -29,13 +32,17 @@ impl SCAdmission {
             state: Arc::new(Mutex::new(SCAdmissionSnapshot {
                 active: 0,
                 limit: limit.limit(),
+                closed: false,
             })),
         }
     }
 
-    /// Reserves one count or leaves the domain unchanged at its limit.
+    /// Reserves one count or leaves the closed/full domain unchanged.
     pub fn try_acquire(&self) -> Result<SCAdmissionPermit, SCAdmissionError> {
         let mut state = lock(&self.state);
+        if state.closed {
+            return Err(SCAdmissionError::Closed);
+        }
         if state.active >= state.limit {
             return Err(SCAdmissionError::AtCapacity);
         }
@@ -46,9 +53,19 @@ impl SCAdmission {
         })
     }
 
-    /// Changes admission for future reservations without canceling existing work.
+    /// Changes the count limit without canceling existing work or reopening closure.
     pub fn set_limit(&self, limit: SCCountLimit) {
         lock(&self.state).limit = limit.limit();
+    }
+
+    /// Permanently stops new reservations in this domain and all its clones.
+    ///
+    /// Existing permits and their accepted discovery/access capabilities remain
+    /// valid. This operation does not stop providers, execute callbacks, wait for
+    /// final use, or retire allocations. Observation of zero active reservations
+    /// names this count domain only, not whole-application shutdown.
+    pub fn close(&self) {
+        lock(&self.state).closed = true;
     }
 
     pub fn snapshot(&self) -> SCAdmissionSnapshot {
@@ -66,15 +83,19 @@ impl fmt::Debug for SCAdmission {
     }
 }
 
-/// Admission could not reserve another count in this domain.
+/// Admission could not reserve another count in the closed or full domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SCAdmissionError {
     AtCapacity,
+    Closed,
 }
 
 impl fmt::Display for SCAdmissionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("admission count is at capacity")
+        formatter.write_str(match self {
+            Self::AtCapacity => "admission count is at capacity",
+            Self::Closed => "admission domain is closed",
+        })
     }
 }
 impl Error for SCAdmissionError {}

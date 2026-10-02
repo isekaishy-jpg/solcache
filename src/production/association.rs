@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::cache::SCIdentity;
 use crate::demand::{SCDemand, SCDemandHandle};
-use crate::policy::SCAdmission;
+use crate::policy::{SCAdmission, SCAdmissionError};
 
 use super::{SCProduction, SCProductionPhase, SCSubmission};
 
@@ -70,6 +70,8 @@ impl<K, O, E> SCProductionMap<K, O, E> {
     /// Demand is checked at admission; later detachment does not cancel work.
     /// Claiming an outcome ends coalescing for that attempt. Callers coordinate
     /// subsequent cache lookup/publication themselves.
+    /// Closing the admission domain rejects new attempts but still permits joining
+    /// existing work; accepted producer capabilities retain child discovery.
     /// A joined observer does not reserve the result: another observer can claim
     /// it concurrently. Serialize claim and publication in the owning coordinator.
     ///
@@ -153,10 +155,13 @@ fn prepare<I, O, E>(
 ) -> Result<SCProductionAttempt<I, O, E>, SCStartRejected<I>> {
     let permit = match admission.try_acquire() {
         Ok(permit) => permit,
-        Err(_) => {
+        Err(error) => {
             return Err(SCStartRejected {
                 inputs,
-                reason: SCStartRejectionReason::AtCapacity,
+                reason: match error {
+                    SCAdmissionError::AtCapacity => SCStartRejectionReason::AtCapacity,
+                    SCAdmissionError::Closed => SCStartRejectionReason::Closed,
+                },
             });
         }
     };
@@ -186,6 +191,7 @@ pub enum SCProductionStart<I, O, E> {
 pub enum SCStartRejectionReason {
     NoDemand,
     AtCapacity,
+    Closed,
 }
 
 /// Admission failure preserving the input for retry or caller cleanup.
