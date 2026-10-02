@@ -302,3 +302,37 @@ taken owners remain valid. The limit comes from the caller, with no OS memory qu
 Run [the storage reuse example](../examples/reuse.rs) with
 `cargo run --example reuse` for a copied prefix, a coherent remainder, scratch
 reuse, and whole-source transfer using only SC and `std`.
+
+## Direct execution and external use
+
+The [manual execution example](../examples/manual_execution.rs) retains the
+submission and its publication ticket in caller-owned storage, then invokes the
+provider at an explicit service point. Cache lookup comes before production and
+input preparation, so a warm request creates no job. The corresponding manual
+queue test rejects a saturated enqueue without invoking or losing the submission,
+then retries that same owned attempt after progress.
+
+The [external lifetime example](../examples/external_lifetime.rs) models an
+independent reader holding real byte backing after a production result is ready.
+This is a simulated device contract, not a real graphics API integration. Immutable
+ready data may be published while that reader retains an owner; the bytes and
+their charge still cannot be destroyed until the reader releases it. When external
+work must gate readiness instead, retain an `SCProductionAccess` through its last
+access. Root callback return, production claim, external final use and owner-thread
+destruction are distinct events. A cleanup context must be pumped after final
+release; a completed job does not drain it automatically.
+
+Run these standalone examples with `cargo run --example manual_execution` and
+`cargo run --example external_lifetime`. Both depend only on SC and `std`.
+
+The [direct Solworker example](../examples/solworker/README.md) is a separate
+package requiring a sibling Solworker checkout. It exercises genuine saturated
+admission, retained retry or abandonment, current demand forwarding, accepted
+child discovery, owner-context publication, and transfer of an SW byte lease to
+SC accounting. A rejected transfer retains the result and its original publication
+ticket for an explicit retry. No adapter or SW dependency is added to SC itself.
+
+Run it with `cargo run --locked --manifest-path examples/solworker/Cargo.toml`.
+Its four integration tests run separately with
+`cargo test --locked --manifest-path examples/solworker/Cargo.toml`; the root
+package's test command does not include this standalone package.
