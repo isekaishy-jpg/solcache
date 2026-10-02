@@ -1,6 +1,6 @@
 # Solcache
 
-Solcache is a Rust library project for reusable resource caching and publication
+Solcache is a Rust library for reusable resource caching and publication
 services. Implemented facilities include keyed storage, retained payloads, bounded
 idle collection, shared production, consumer demand, declared allocation accounting
 and independent admission policy. Versioned publication and declared dependency
@@ -8,20 +8,41 @@ invalidation, exclusive reusable pools, copied range storage and consumable
 source buffers are implemented.
 The library uses only `std`.
 
-The proposed responsibility is to coordinate resource identity, shared production,
+Its responsibility is to coordinate resource identity, shared production,
 consumer interest, reusable results, residency, invalidation, and cache publication.
 Different resource families may need different retention and readiness policies.
-The design must establish those contracts before selecting a common mechanism.
+The application selects those contracts explicitly for each family.
 
 CPU scheduling belongs to Solworker. File/network providers, format decoders,
 rendering/device operations, and the application's event loop remain distinct
 integration boundaries. Publishing a cache result does not by itself establish
 scene readiness, GPU readiness, or permission to recycle externally accessed memory.
 
-Public Solcache types and standalone functions will use the `SC` prefix. Methods
-and modules will follow ordinary Rust naming. The crate is intended to remain
+Public Solcache types and standalone functions use the `SC` prefix. Methods
+and modules follow ordinary Rust naming. The crate remains
 reusable across applications; application-specific identities and semantics must
 be expressed through deliberate integration boundaries.
+
+## Usage guide
+
+The base case is Forever-informed mechanisms applied to Stock 3.3.5a workloads,
+with Solworker supplying CPU execution. The APIs remain application independent:
+use them directly, without an adapter layer or a Solworker dependency in Solcache.
+
+| Read | Purpose |
+| --- | --- |
+| [Architecture and facility selection](architecture.md) | Decide where state belongs and which SC facility to use. |
+| [Stock workload recipes](workloads.md) | Apply the mechanisms to all 22 mapped resource and consumer families. |
+| [Direct Solworker integration](solworker.md) | Connect ownership, admission, demand, discovery, publication and shutdown. |
+| [Family policies and accounting](policies.md) | Apply Forever budgets with their actual units and release boundaries. |
+| [Research basis and limits](evidence.md) | Separate recovered behavior, Stock-supported extrapolation and implemented contracts. |
+
+The reference sections below describe the implemented API. Generate its Rust
+reference with `cargo doc --no-deps`. Start with the
+[runnable examples](architecture.md#examples) for actual calls, including the
+separate package that exercises both libraries. The guides describe intended
+application compositions; they do not claim a running native client integration,
+complete workload validation or measured performance gains.
 
 ## Ownership foundation
 
