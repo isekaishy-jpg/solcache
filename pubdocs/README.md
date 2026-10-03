@@ -34,6 +34,7 @@ use them directly, without an adapter layer or a Solworker dependency in Solcach
 | [Architecture and facility selection](architecture.md) | Decide where state belongs and which SC facility to use. |
 | [Stock workload recipes](workloads.md) | Apply the mechanisms to all 22 mapped resource and consumer families. |
 | [Direct Solworker integration](solworker.md) | Connect ownership, admission, demand, discovery, publication and shutdown. |
+| [Integration failure points](integration-pitfalls.md) | Diagnose loading stalls and avoid broken ownership, demand, policy and measurement boundaries. |
 | [Family policies and accounting](policies.md) | Apply Forever budgets with their actual units and release boundaries. |
 | [Research basis and limits](evidence.md) | Separate recovered behavior, Stock-supported extrapolation and implemented contracts. |
 

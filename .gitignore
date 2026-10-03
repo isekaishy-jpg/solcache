@@ -1,5 +1,6 @@
 # Generated build, test, profiling and local research artifacts.
 /target/
+/examples/solworker/target/
 __pycache__/
 *.py[cod]
 

@@ -7,6 +7,11 @@ for the corresponding workload; SC installs no global memory cap and does not
 derive worker counts from resource allowances. The [research summaries](evidence.md)
 explain the native-to-Rust boundary.
 
+Component production/payload settings are not universal BLP texture-cache
+defaults. Applying those settings to another workload is an explicit adaptation.
+Keep a comparison at the old settings separate from a run adopting a different
+policy; see [integration failure points](integration-pitfalls.md).
+
 ## Reference settings and release points
 
 | Family | Recovered policy | SC use and limit |

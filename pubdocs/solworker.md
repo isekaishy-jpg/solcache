@@ -8,6 +8,11 @@ second scheduler. The application's coordinator owns resource policy and handoff
 state. The [runnable integration package](../examples/solworker/README.md) supplies
 the actual API calls; this guide explains why the pieces belong together.
 
+Read [integration failure points](integration-pitfalls.md) when composing an
+application provider or qualifying a benchmark. Neither library implements
+platform asynchronous asset I/O; external readiness must be connected to the
+provider's real completion and physical-access contract.
+
 ## One shared production, one publication round
 
 Serialize these decisions in the resource's owning coordinator. Preserve pending
